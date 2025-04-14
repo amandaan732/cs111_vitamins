@@ -75,7 +75,8 @@ word_count_t *add_word_with_count(word_count_list_t *wclist, char *word,
         return NULL;
     }
 
-    wc->word = word;
+    wc->word = strdup(word); //wc->word = word; doesn't work; need a COPY
+    free(word);
     wc->count = count;
 
     list_push_back(wclist, &wc->elem);

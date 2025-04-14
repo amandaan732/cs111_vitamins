@@ -54,7 +54,7 @@ void *thread_function(void *arg) {
     FILE *file = fopen(threadArg->filename, "r");
     if (!file) { //throw an error if the file cant be opened
         fprintf(stderr, "could not open file: %s\n", threadArg->filename);
-        free(targ);
+        free(threadArg);
         return NULL;
     }
     //if you CAN open then count and close file
@@ -70,13 +70,40 @@ void *thread_function(void *arg) {
 int main(int argc, char *argv[]) {
     /* Create the empty data structure. */
     word_count_list_t word_counts;
-    init_words(&word_counts);
+    init_words(&word_counts); //the shared list to use in thread function
 
     if (argc <= 1) {
         /* Process stdin in a single thread. */
         count_words(&word_counts, stdin);
     } else {
-        /* TODO */
+        int num_files = argc - 1;
+        //one thread per file in an array
+        pthread_t threads[num_files];
+
+        for (int i = 0; i < num_files; i++) {
+            //for each file, allocate memory for filename/list (threadStruct)
+            threadStruct *threadArg = malloc(sizeof(threadStruct));
+            if (!threadArg) { //if can't allocate mem
+                fprintf(stderr, "could not allocate memory for thread arg\n");
+                exit(1);
+            }
+
+            threadArg->filename = argv[i + 1]; //skip the program's name
+            threadArg->wclist = &word_counts; //reference to shared list
+
+            //make new thread w/ thread ID stored in &threads[i]
+            int rc = pthread_create(&threads[i], NULL, thread_function, threadArg);
+            if (rc != 0) {
+                fprintf(stderr, "could not create thread for file: %s\n", argv[i + 1]);
+                free(threadArg);
+                continue;
+            }
+        }
+
+        //join all the threads (so program has to wait for all threads to finish before exiting)
+        for (int i = 0; i < num_files; i++) {
+            pthread_join(threads[i], NULL);
+        }
     }
 
     /* Output final result of all threads' work. */
