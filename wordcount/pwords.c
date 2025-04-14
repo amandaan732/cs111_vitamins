@@ -41,7 +41,7 @@
         //has name of file the thread is reading and pointer to shared list -->one per thread
     //a function that each thread runs:
         //open the file (w/ proper error if cant open)
-        //count the words
+        //count the words (like in words.c)
         //CLOSE the file
 
 typedef struct {
@@ -76,8 +76,10 @@ int main(int argc, char *argv[]) {
         /* Process stdin in a single thread. */
         count_words(&word_counts, stdin);
     } else {
-        int num_files = argc - 1;
-        //one thread per file in an array
+        //argc = number of elements in argv
+        //argv[0] = ./pwords, argv[1] = file1.txt, etc...
+        int num_files = argc - 1; 
+        //one thread per file put in an array
         pthread_t threads[num_files];
 
         for (int i = 0; i < num_files; i++) {
