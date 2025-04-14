@@ -99,11 +99,15 @@ void fprint_words(word_count_list_t *wclist, FILE *outfile) {
 
 static bool less_list(const struct list_elem *ewc1,
                       const struct list_elem *ewc2, void *aux) {
-    //
-
+    //less is a function pointer 
+    //basically letting us say, "trust, aux is a fn pointer"
     bool (*less)(const word_count_t *, const word_count_t *) = aux;
+
+    //convert list element to struct using list_entry (like before)
     word_count_t *wc1 = list_entry(ewc1, word_count_t, elem);
     word_count_t *wc2 = list_entry(ewc2, word_count_t, elem);
+
+    //call actual comparison logic:
     return less(wc1, wc2);
 }
 
