@@ -32,6 +32,38 @@
 #include "word_count.h"
 #include "word_helpers.h"
 
+//need to:
+    //spawn threads
+    //open and process each file in aseparate thread
+    //properly synchronize access to shared data structures when processing files
+//should make:
+    //struct:
+        //has name of file the thread is reading and pointer to shared list -->one per thread
+    //a function that each thread runs:
+        //open the file (w/ proper error if cant open)
+        //count the words
+        //CLOSE the file
+
+typedef struct {
+    const char *filename;
+    word_count_list_t *wclist;
+} threadStruct;
+
+void *thread_function(void *arg) {
+    threadStruct *threadArg = (threadStruct *)arg;
+    FILE *file = fopen(threadArg->filename, "r");
+    if (!file) { //throw an error if the file cant be opened
+        fprintf(stderr, "could not open file: %s\n", threadArg->filename);
+        free(targ);
+        return NULL;
+    }
+    //if you CAN open then count and close file
+    count_words(threadArg->wclist, file);
+    fclose(file);
+    free(threadArg);
+    return NULL;
+}
+
 /*
  * main - handle command line, spawning one thread per file.
  */

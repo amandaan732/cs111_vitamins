@@ -93,7 +93,7 @@ void fprint_words(word_count_list_t *wclist, FILE *outfile) {
 
     for (struct list_elem *current = list_begin(wclist); current != list_end(wclist); current = list_next(current)) {
         word_count_t *curStruct = list_entry(current, word_count_t, elem);
-        fprintf(outfile, "%8d\t%s\n", wc->count, wc->word);
+        fprintf(outfile, "%8d\t%s\n", curStruct->count, curStruct->word);
     }
 }
 
