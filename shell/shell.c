@@ -68,11 +68,15 @@ int cmd_exit(unused struct tokens *tokens) {
 
 //actually printing the current working directory
 int cmd_pwd(unused struct tokens *tokens) {
-    char cwd[4096];
-    if (getcwd(cwd, sizeof(cwd)) != NULL) {
+    char cwd[4096]; //buffer to store path of cwd
+    if (getcwd(cwd, sizeof(cwd)) != NULL) { 
+        //char *language = "korean";
+        //printf("I speak %s!\n", language);
+        ////Output: 
+        ////I speak korean!
         printf("%s\n", cwd);
         return 1;
-    } else {
+    } else { //if you cant get the cwd, print error
         perror("pwd");
         return -1;
     }
@@ -80,12 +84,14 @@ int cmd_pwd(unused struct tokens *tokens) {
 
 //actually changing the current working directory
 int cmd_cd(struct tokens *tokens) {
+    //get the first argument after the cd command and store in dir pointer
+        //ex. cd ../Desktop --> "../Desktop" is stored in dir
     char *dir = tokens_get_token(tokens, 1);
-    if (dir == NULL) {
+    if (dir == NULL) { //no arguments is invalid
         fprintf(stderr, "cd: missing argument\n");
         return -1;
     }
-    if (chdir(dir) != 0) {
+    if (chdir(dir) != 0) { //if the dir is invalid, print error 
         perror("cd");
         return -1;
     }
@@ -155,7 +161,42 @@ int main(unused int argc, unused char *argv[]) {
             cmd_table[fundex].fun(tokens);
         } else {
             /* REPLACE this to run commands as programs. */
-            fprintf(stdout, "This shell doesn't know how to run programs.\n");
+            //plan:
+                //" fork a child process, which calls one of the 
+                //exec functions to run the new program. 
+                //The parent process should wait until the child process completes and 
+                //then continue listening for more commands."
+            
+                //so take the tokens of the input as arguments --> arguments[0] is the path, [1] is argument 1, etc
+                //use execv and run the program (path, arguments[])
+                //if its the parent, wait for child to be done 
+                //print errors when necessary
+            pid_t pid = fork(); //0 = child, - = error, + = parent
+            if (pid == 0) { //child
+                size_t length = tokens_get_length(tokens); //the number of tokens (directory + arguments)
+                //char** is an array of strings (char* is a string with null as lest element)
+                char **arguments = malloc((length + 1) * sizeof(char *)); //the last one in the array should be NULL (so length+1)
+                for (size_t i = 0; i < length; i++) { //put the tokens into arguments array
+                    arguments[i] = tokens_get_token(tokens, i);
+                    // printf("%s\n", arguments[i]);
+                }
+                arguments[length] = NULL; //last element is NULL
+
+                execv(arguments[0], arguments); //try to running program
+                perror("execv"); //execv returning == an error (invalid path), so exit child process
+                exit(1); //exit with an error
+                //*NOTE:
+                    //so execv replaces the child process with /usr/bin/wc, so the waitpid
+                    //status that is stored in parent process should be 0 if everything went well
+                    //and 1 if the execv failed
+                    //either way, waitpid sees that the child finished, so we can move on
+            } else if (pid > 0) { //parent
+                int childCompleted; //somewhere to store child’s exit status
+                waitpid(pid, &childCompleted, 0); //0 flag == wait for child to exit normally
+                //wiat for THIS specific child to finish
+            } else { //pid is negative == error
+                perror("fork");
+            }
         }
 
         if (shell_is_interactive) {
