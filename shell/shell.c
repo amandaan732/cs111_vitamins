@@ -136,6 +136,14 @@ void init_shell() {
         /* Save the current termios to a variable, so it can be restored later.
          */
         tcgetattr(shell_terminal, &shell_tmodes);
+
+        //shell should ignore some signals that normally interrupts or stops it
+        signal(SIGINT, SIG_IGN);   
+        signal(SIGQUIT, SIG_IGN);  
+        signal(SIGTSTP, SIG_IGN);  
+        signal(SIGTTIN, SIG_IGN);
+        signal(SIGTTOU, SIG_IGN);
+        signal(SIGTERM, SIG_IGN);
     }
 }
 
@@ -173,6 +181,24 @@ int main(unused int argc, unused char *argv[]) {
                 //print errors when necessary
             pid_t pid = fork(); //0 = child, - = error, + = parent
             if (pid == 0) { //child
+                //give child its own process group
+                setpgid(0, 0); //makes the child the leader of a new process group (so not part of the shell’s group anymore)
+                //general form is like: setpgid(pid, pgid); where pid = the process whose group you want to change
+                //and pgid = the new process group ID 
+                //so basically making this process (pid = 0) be in a new group with its own PID (pgid = 0), making it the leader of its own group(?)
+                //^terminal signals only go to the child process group
+                //when foreground goes back to the shell, the signals are ignored again
+
+                tcsetpgrp(shell_terminal, getpid()); //put child process group in foreground
+                //let the child behave/respond to signals (default signal handling)
+                signal(SIGINT, SIG_DFL);
+                signal(SIGQUIT, SIG_DFL);
+                signal(SIGTSTP, SIG_DFL);
+                signal(SIGTTIN, SIG_DFL);
+                signal(SIGTTOU, SIG_DFL);
+                signal(SIGTERM, SIG_DFL);
+
+
                 size_t length = tokens_get_length(tokens); //the number of tokens (directory + arguments)
                 //char** is an array of strings (char* is a string with null as lest element but u can also just do a normal array)
                 char **arguments = malloc((length + 1) * sizeof(char *)); //the last one in the array should be NULL (so length+1)
@@ -182,7 +208,7 @@ int main(unused int argc, unused char *argv[]) {
                 }
                 arguments[length] = NULL; //last element is NULL
 
-                //pt 5 doing IO redirection
+                //pt 5: doing IO redirection; need to do this before execv
                 int inpfd = -1; //these are the in/output file descriptors
                 int outpfd = -1; //-1 is default/file not opened yet
 
@@ -198,7 +224,7 @@ int main(unused int argc, unused char *argv[]) {
                         //int dup2(int oldFileDescriptor, int newFileDescriptor);
                         dup2(inpfd, STDIN_FILENO); //replace child’s standard input (fd = 0) with newly opened file's fd
                         close(inpfd); //close the file!!! (its fd is copied to stdin now)
-                        //just make the < and the file null so we skip it ; skipping iterations too finicky
+                        //make the < and the file null so that execv doesnt see/use it later
                         arguments[i] = NULL;
                         arguments[i + 1] = NULL;
                     } else if (strcmp(arguments[i], ">") == 0 && i + 1 < length) { //same but > 
@@ -257,6 +283,7 @@ int main(unused int argc, unused char *argv[]) {
                 int childCompleted; //somewhere to store child’s exit status
                 waitpid(pid, &childCompleted, 0); //0 flag == wait for child to exit normally
                 //wiat for THIS specific child to finish
+                tcsetpgrp(shell_terminal, shell_pgid); //now that the child is done, the shell goes back in the foreground
             } else { //pid is negative == error
                 perror("fork");
             }
