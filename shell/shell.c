@@ -174,7 +174,7 @@ int main(unused int argc, unused char *argv[]) {
             pid_t pid = fork(); //0 = child, - = error, + = parent
             if (pid == 0) { //child
                 size_t length = tokens_get_length(tokens); //the number of tokens (directory + arguments)
-                //char** is an array of strings (char* is a string with null as lest element)
+                //char** is an array of strings (char* is a string with null as lest element but u can also just do a normal array)
                 char **arguments = malloc((length + 1) * sizeof(char *)); //the last one in the array should be NULL (so length+1)
                 for (size_t i = 0; i < length; i++) { //put the tokens into arguments array
                     arguments[i] = tokens_get_token(tokens, i);
@@ -182,7 +182,38 @@ int main(unused int argc, unused char *argv[]) {
                 }
                 arguments[length] = NULL; //last element is NULL
 
-                execv(arguments[0], arguments); //try to running program
+                // execv(arguments[0], arguments); //try to run program
+                //****PT 4 modifies ^pt3 to ALSO allow use of "PATH variable from the environment to resolve program names"
+                    //plan:
+                        //if args[0] starts with '/' then keep it the same as pt 3 (the path is given)
+                        //otherwise:
+                            //need to look up PATH and get all the directories in a string (separated by ':')
+                            //append '/program_name' to each dir in the PATH's long string
+                            //put that path inside execv and try running program until it works or all directories were checked
+                
+                if (strchr(arguments[0], '/') != NULL) { //strchr gets first instance of / in args[0]
+                    execv(arguments[0], arguments); //same as pt 3
+                    perror("execv");
+                    exit(1);
+                }
+
+                //for PATH:
+                char *path = getenv("PATH"); //get the actual string
+                if (path == NULL) { //if it couldn't get the string then exit 
+                    fprintf(stderr, "couldn't get path string\n");
+                    exit(1);
+                }
+
+                char *pathCopy = strdup(path); //need to make copies bc strtok will directly modify the string
+                char *dir = strtok(pathCopy, ":"); //tokenize at each : (separate directories)
+                while (dir != NULL) {
+                    char fullPath[4096]; //decided to allocate space w/o using malloc; recommended on stack overflow to use 4096
+                    snprintf(fullPath, sizeof(fullPath), "%s/%s", dir, arguments[0]); //safer print for no buffer overflow
+
+                    execv(fullPath, arguments); //try running program; if it fails, then go to next directory
+                    dir = strtok(NULL, ":"); //will only go here if execv failed (going to next :/directory)
+                }
+
                 perror("execv"); //execv returning == an error (invalid path), so exit child process
                 exit(1); //exit with an error
                 //*NOTE:
