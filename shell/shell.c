@@ -182,6 +182,38 @@ int main(unused int argc, unused char *argv[]) {
                 }
                 arguments[length] = NULL; //last element is NULL
 
+                //pt 5 doing IO redirection
+                int inpfd = -1; //these are the in/output file descriptors
+                int outpfd = -1; //-1 is default/file not opened yet
+
+                for (size_t i = 0; i < length; i++) { //go through all the tokens
+                    if (arguments[i] == NULL) continue; //skip if the arg entry is null
+
+                    if (strcmp(arguments[i], "<") == 0 && i + 1 < length) { //"if the arg is < and there is an argument after it too"
+                        inpfd = open(arguments[i + 1], O_RDONLY); //reads it and puts file descriptor in in_fd
+                        if (inpfd < 0) { //if u couldnt open it, print error
+                            perror("opening input file");
+                            exit(1);
+                        }
+                        //int dup2(int oldFileDescriptor, int newFileDescriptor);
+                        dup2(inpfd, STDIN_FILENO); //replace child’s standard input (fd = 0) with newly opened file's fd
+                        close(inpfd); //close the file!!! (its fd is copied to stdin now)
+                        //just make the < and the file null so we skip it ; skipping iterations too finicky
+                        arguments[i] = NULL;
+                        arguments[i + 1] = NULL;
+                    } else if (strcmp(arguments[i], ">") == 0 && i + 1 < length) { //same but > 
+                        outpfd = open(arguments[i + 1], O_WRONLY | O_CREAT | O_TRUNC, 0666); //write, create, erase, permissions
+                        if (outpfd < 0) { //cant open file
+                            perror("opening output file");
+                            exit(1);
+                        }
+                        dup2(outpfd, STDOUT_FILENO); //replace stdout (fd = 1) with outpfd
+                        close(outpfd); 
+                        arguments[i] = NULL;
+                        arguments[i + 1] = NULL;
+                    }
+                }
+
                 // execv(arguments[0], arguments); //try to run program
                 //****PT 4 modifies ^pt3 to ALSO allow use of "PATH variable from the environment to resolve program names"
                     //plan:
