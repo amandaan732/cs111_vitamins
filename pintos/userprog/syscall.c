@@ -29,4 +29,17 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
         printf("%s: exit(%d)\n", thread_current()->name, args[1]);
         thread_exit();
     }
+    else if (args[0] == SYS_INCREMENT){ //increment syscall
+        f->eax = args[1] + 1;
+    }
+    // else if (args[0] == SYS_WRITE) { //write syscall
+    //     fd = args[1];
+    //     buffer = args[2];
+    //     size = args[3];
+
+    //     //only assuming fd = 1
+    //     putbuf(buffer, size);
+
+
+    // }
 }
