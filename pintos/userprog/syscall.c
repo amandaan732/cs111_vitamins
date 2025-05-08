@@ -32,14 +32,14 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
     else if (args[0] == SYS_INCREMENT){ //increment syscall
         f->eax = args[1] + 1;
     }
-    // else if (args[0] == SYS_WRITE) { //write syscall
-    //     fd = args[1];
-    //     buffer = args[2];
-    //     size = args[3];
+    else if (args[0] == SYS_WRITE) { //write syscall
+        int fd = args[1];
+        const void *buffer = args[2];
+        unsigned size = args[3];
 
-    //     //only assuming fd = 1
-    //     putbuf(buffer, size);
+        //only assuming fd = 1
+        putbuf(buffer, size);
+        f->eax = size;
 
-
-    // }
+    }
 }
