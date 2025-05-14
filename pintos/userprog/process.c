@@ -42,7 +42,24 @@ tid_t process_execute(const char *file_name) {
     strlcpy(fn_copy, file_name, PGSIZE);
 
     /* Create a new thread to execute FILE_NAME. */
-    tid = thread_create(file_name, PRI_DEFAULT, start_process, fn_copy);
+    // tid = thread_create(file_name, PRI_DEFAULT, start_process, fn_copy);
+    //replace ^ WITH: 
+    // Copy to extract just the executable name
+    char *file_name_copy = palloc_get_page(0);
+    if (file_name_copy == NULL) {
+        palloc_free_page(fn_copy);
+        return TID_ERROR;
+    }
+    strlcpy(file_name_copy, file_name, PGSIZE);
+    char *save_ptr;
+    char *program = strtok_r(file_name_copy, " ", &save_ptr);
+
+    // Thread name is just the executable
+    tid = thread_create(program, PRI_DEFAULT, start_process, fn_copy);
+
+    palloc_free_page(file_name_copy);
+    //END OF REPLACEMENT
+
     if (tid == TID_ERROR)
         palloc_free_page(fn_copy);
     return tid;
@@ -189,7 +206,7 @@ struct Elf32_Phdr {
 #define PF_W 2 /* Writable. */
 #define PF_R 4 /* Readable. */
 
-static bool setup_stack(void **esp);
+static bool setup_stack(void **esp, const char *cmdline);
 static bool validate_segment(const struct Elf32_Phdr *, struct file *);
 static bool load_segment(struct file *file, off_t ofs, uint8_t *upage,
                          uint32_t read_bytes, uint32_t zero_bytes,
@@ -199,7 +216,7 @@ static bool load_segment(struct file *file, off_t ofs, uint8_t *upage,
    Stores the executable's entry point into *EIP
    and its initial stack pointer into *ESP.
    Returns true if successful, false otherwise. */
-bool load(const char *file_name, void (**eip)(void), void **esp) {
+bool load(const char *cmdline, void (**eip)(void), void **esp) {
     struct thread *t = thread_current();
     struct Elf32_Ehdr ehdr;
     struct file *file = NULL;
@@ -213,23 +230,34 @@ bool load(const char *file_name, void (**eip)(void), void **esp) {
         goto done;
     process_activate();
 
-    /* Open executable file. */
-    file = filesys_open(file_name);
+    //insertion here:
+        /* Extract the program (executable) name from cmdline. */
+    char *cmdline_copy = palloc_get_page(0);
+    if (cmdline_copy == NULL)
+        goto done;
+    strlcpy(cmdline_copy, cmdline, PGSIZE);
+
+    char *save_ptr;
+    char *program = strtok_r(cmdline_copy, " ", &save_ptr);
+
+    file = filesys_open(program);
+    palloc_free_page(cmdline_copy);
+
     if (file == NULL) {
-        printf("load: %s: open failed\n", file_name);
+        printf("load: %s: open failed\n", program);
         goto done;
     }
 
-    /* Read and verify executable header. */
+    /* Read and verify ELF header. */
     if (file_read(file, &ehdr, sizeof ehdr) != sizeof ehdr ||
         memcmp(ehdr.e_ident, "\177ELF\1\1\1", 7) || ehdr.e_type != 2 ||
         ehdr.e_machine != 3 || ehdr.e_version != 1 ||
         ehdr.e_phentsize != sizeof(struct Elf32_Phdr) || ehdr.e_phnum > 1024) {
-        printf("load: %s: error loading executable\n", file_name);
+        printf("load: %s: error loading executable\n", program);
         goto done;
     }
 
-    /* Read program headers. */
+    /* Load all segments. */
     file_ofs = ehdr.e_phoff;
     for (i = 0; i < ehdr.e_phnum; i++) {
         struct Elf32_Phdr phdr;
@@ -241,48 +269,25 @@ bool load(const char *file_name, void (**eip)(void), void **esp) {
         if (file_read(file, &phdr, sizeof phdr) != sizeof phdr)
             goto done;
         file_ofs += sizeof phdr;
-        switch (phdr.p_type) {
-        case PT_NULL:
-        case PT_NOTE:
-        case PT_PHDR:
-        case PT_STACK:
-        default:
-            /* Ignore this segment. */
-            break;
-        case PT_DYNAMIC:
-        case PT_INTERP:
-        case PT_SHLIB:
-            goto done;
-        case PT_LOAD:
+
+        if (phdr.p_type == PT_LOAD) {
             if (validate_segment(&phdr, file)) {
                 bool writable = (phdr.p_flags & PF_W) != 0;
                 uint32_t file_page = phdr.p_offset & ~PGMASK;
                 uint32_t mem_page = phdr.p_vaddr & ~PGMASK;
                 uint32_t page_offset = phdr.p_vaddr & PGMASK;
-                uint32_t read_bytes, zero_bytes;
-                if (phdr.p_filesz > 0) {
-                    /* Normal segment.
-                       Read initial part from disk and zero the rest. */
-                    read_bytes = page_offset + phdr.p_filesz;
-                    zero_bytes = (ROUND_UP(page_offset + phdr.p_memsz, PGSIZE) -
-                                  read_bytes);
-                } else {
-                    /* Entirely zero.
-                       Don't read anything from disk. */
-                    read_bytes = 0;
-                    zero_bytes = ROUND_UP(page_offset + phdr.p_memsz, PGSIZE);
-                }
-                if (!load_segment(file, file_page, (void *) mem_page,
-                                  read_bytes, zero_bytes, writable))
+                uint32_t read_bytes = page_offset + phdr.p_filesz;
+                uint32_t zero_bytes = ROUND_UP(page_offset + phdr.p_memsz, PGSIZE) - read_bytes;
+                if (!load_segment(file, file_page, (void *) mem_page, read_bytes, zero_bytes, writable))
                     goto done;
-            } else
+            } else {
                 goto done;
-            break;
+            }
         }
     }
 
     /* Set up stack. */
-    if (!setup_stack(esp))
+    if (!setup_stack(esp, cmdline))
         goto done;
 
     /* Start address. */
@@ -400,24 +405,73 @@ static bool load_segment(struct file *file, off_t ofs, uint8_t *upage,
 
 /* Create a minimal stack by mapping a zeroed page at the top of
    user virtual memory. */
-static bool setup_stack(void **esp) {
+static bool setup_stack(void **esp, const char *cmdline) {
     uint8_t *kpage;
-    bool success = false;
+    // bool success = false;
 
     kpage = palloc_get_page(PAL_USER | PAL_ZERO);
-    if (kpage != NULL) {
-        success = install_page(((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
-        if (success) {
-            // *esp = PHYS_BASE;
-            *esp = PHYS_BASE - 12;
-            ((uint32_t *) *esp)[0] = 0;  
-            ((uint32_t *) *esp)[1] = 0;  
-            ((uint32_t *) *esp)[2] = 0;
-        }
-        else
-            palloc_free_page(kpage);
+    if (kpage == NULL)
+        return false;
+
+    bool success = install_page(((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
+    if (!success) {
+        palloc_free_page(kpage);
+        return false;
     }
-    return success;
+
+    uint8_t *sp = PHYS_BASE;
+
+    /* Copy cmdline so we can tokenize it */
+    char *cmd_copy = palloc_get_page(0);
+    if (cmd_copy == NULL)
+        return false;
+    strlcpy(cmd_copy, cmdline, PGSIZE);
+
+    /* Tokenize arguments */
+    char *argv[32];
+    int argc = 0;
+    char *token, *save_ptr;
+    for (token = strtok_r(cmd_copy, " ", &save_ptr);
+         token != NULL && argc < 32;
+         token = strtok_r(NULL, " ", &save_ptr)) {
+        sp -= strlen(token) + 1;
+        memcpy(sp, token, strlen(token) + 1);
+        argv[argc++] = (char *) sp;
+    }
+
+    /* Word-align the stack */
+    while (((uintptr_t)(sp - 4)) % 16 != 0) {
+        *(--sp) = 0;
+    }
+
+    /* Null sentinel */
+    sp -= sizeof(char *);
+    *(char **)sp = NULL;
+
+    /* Push argv[i] in reverse order */
+    for (int i = argc - 1; i >= 0; i--) {
+        sp -= sizeof(char *);
+        *(char **)sp = argv[i];
+    }
+    
+    char **argv_ptr = (char **) sp;
+
+    /* Push argv */
+    sp -= sizeof(char **);
+    *(char ***)sp = argv_ptr;
+
+    /* Push argc */
+    sp -= sizeof(int);
+    *(int *)sp = argc;
+
+    /* Push fake return address */
+    sp -= sizeof(void *);
+    *(void **)sp = NULL;
+
+    *esp = sp;
+
+    palloc_free_page(cmd_copy);
+    return true;
 }
 
 /* Adds a mapping from user virtual address UPAGE to kernel
