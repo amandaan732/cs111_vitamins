@@ -441,7 +441,6 @@ static bool setup_stack(void **esp, const char *cmdline) {
 
     uint8_t *sp = PHYS_BASE; 
 
-
     //need to make copy cmdline to tokenize it (otherwise weird behavior)
     char *cmd_copy = palloc_get_page(0);
     if (cmd_copy == NULL)
@@ -460,19 +459,12 @@ static bool setup_stack(void **esp, const char *cmdline) {
         argv[argc++] = (char *) sp;
     }
 
-    // while ((uintptr_t)(sp) % 16 != 0) {
-    //     *(--sp) = 0;
-    // }
     
-
     // sp = (uint8_t *)((uintptr_t)sp & ~0xf); //NOT RIGHT???
     // //sp -= 8; // pass 4
     // sp -= 12; //pass 23
     // //sp -= 4; // pass 1
     // //sp -= 16; //pass 1
-
-    while ((uintptr_t)sp % 4 != 0)
-        *(--sp) = 0;
 
     // signal end of argv[] with null
     sp -= sizeof(char *);
@@ -486,10 +478,15 @@ static bool setup_stack(void **esp, const char *cmdline) {
     }
 
 
-    // sp = (uint8_t *)((uintptr_t)sp & ~0xf);
-    // sp -= 12;
-    
     char **argv_ptr = (char **) sp;
+    
+
+    // align the stack pointer to 16 bytes considering 12 bytes pushed + 28 bytes in _start
+    uintptr_t padding = ((uintptr_t)sp - 40) % 16;
+    if (padding != 0) {
+        sp -= padding;
+        memset(sp, 0, padding);
+    }
 
     //push pointer to argv 
     sp -= sizeof(char **);
@@ -501,19 +498,14 @@ static bool setup_stack(void **esp, const char *cmdline) {
 
     //push fake return address - 4 bytes
     sp -= sizeof(void *);
-    *(void **)sp = NULL;
+    *(void **)sp = 0;
 
-    //now aligning the FINAL stack pointerso that (sp + 4) is 16-byte aligned
-    if (((uintptr_t)sp + 4) % 16 != 0) {
-        int pad = ((uintptr_t)sp + 4) % 16;
-        sp -= pad;
-        memset(sp, 0, pad);
-    }
 
     *esp = sp;
-   // printf("esp+4 %16 = %d\n", ((uintptr_t)sp + 4) % 16);
+
 
     palloc_free_page(cmd_copy);
+
     return true;
 }
 
