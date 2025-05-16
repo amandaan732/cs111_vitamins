@@ -224,40 +224,37 @@ bool load(const char *cmdline, void (**eip)(void), void **esp) {
     bool success = false;
     int i;
 
+    // Extract program name from command line
+    char *cmd_copy = palloc_get_page(0);
+    if (cmd_copy == NULL)
+        return false;
+    strlcpy(cmd_copy, cmdline, PGSIZE);
+    char *save_ptr;
+    char *prog_name = strtok_r(cmd_copy, " ", &save_ptr);
+
     /* Allocate and activate page directory. */
     t->pagedir = pagedir_create();
     if (t->pagedir == NULL)
         goto done;
     process_activate();
 
-    //insertion here:
-        /* Extract the program (executable) name from cmdline. */
-    char *cmdline_copy = palloc_get_page(0);
-    if (cmdline_copy == NULL)
-        goto done;
-    strlcpy(cmdline_copy, cmdline, PGSIZE);
-
-    char *save_ptr;
-    char *program = strtok_r(cmdline_copy, " ", &save_ptr);
-
-    file = filesys_open(program);
-    palloc_free_page(cmdline_copy);
-
+    /* Open executable file. */
+    file = filesys_open(prog_name);
     if (file == NULL) {
-        printf("load: %s: open failed\n", program);
+        printf("load: %s: open failed\n", prog_name);
         goto done;
     }
 
-    /* Read and verify ELF header. */
+    /* Read and verify executable header. */
     if (file_read(file, &ehdr, sizeof ehdr) != sizeof ehdr ||
         memcmp(ehdr.e_ident, "\177ELF\1\1\1", 7) || ehdr.e_type != 2 ||
         ehdr.e_machine != 3 || ehdr.e_version != 1 ||
         ehdr.e_phentsize != sizeof(struct Elf32_Phdr) || ehdr.e_phnum > 1024) {
-        printf("load: %s: error loading executable\n", program);
+        printf("load: %s: error loading executable\n", prog_name);
         goto done;
     }
 
-    /* Load all segments. */
+    /* Read program headers. */
     file_ofs = ehdr.e_phoff;
     for (i = 0; i < ehdr.e_phnum; i++) {
         struct Elf32_Phdr phdr;
@@ -269,20 +266,43 @@ bool load(const char *cmdline, void (**eip)(void), void **esp) {
         if (file_read(file, &phdr, sizeof phdr) != sizeof phdr)
             goto done;
         file_ofs += sizeof phdr;
-
-        if (phdr.p_type == PT_LOAD) {
+        switch (phdr.p_type) {
+        case PT_NULL:
+        case PT_NOTE:
+        case PT_PHDR:
+        case PT_STACK:
+        default:
+            /* Ignore this segment. */
+            break;
+        case PT_DYNAMIC:
+        case PT_INTERP:
+        case PT_SHLIB:
+            goto done;
+        case PT_LOAD:
             if (validate_segment(&phdr, file)) {
                 bool writable = (phdr.p_flags & PF_W) != 0;
                 uint32_t file_page = phdr.p_offset & ~PGMASK;
                 uint32_t mem_page = phdr.p_vaddr & ~PGMASK;
                 uint32_t page_offset = phdr.p_vaddr & PGMASK;
-                uint32_t read_bytes = page_offset + phdr.p_filesz;
-                uint32_t zero_bytes = ROUND_UP(page_offset + phdr.p_memsz, PGSIZE) - read_bytes;
-                if (!load_segment(file, file_page, (void *) mem_page, read_bytes, zero_bytes, writable))
+                uint32_t read_bytes, zero_bytes;
+                if (phdr.p_filesz > 0) {
+                    /* Normal segment.
+                       Read initial part from disk and zero the rest. */
+                    read_bytes = page_offset + phdr.p_filesz;
+                    zero_bytes = (ROUND_UP(page_offset + phdr.p_memsz, PGSIZE) -
+                                  read_bytes);
+                } else {
+                    /* Entirely zero.
+                       Don't read anything from disk. */
+                    read_bytes = 0;
+                    zero_bytes = ROUND_UP(page_offset + phdr.p_memsz, PGSIZE);
+                }
+                if (!load_segment(file, file_page, (void *) mem_page,
+                                  read_bytes, zero_bytes, writable))
                     goto done;
-            } else {
+            } else
                 goto done;
-            }
+            break;
         }
     }
 
@@ -419,15 +439,16 @@ static bool setup_stack(void **esp, const char *cmdline) {
         return false;
     }
 
-    uint8_t *sp = PHYS_BASE;
+    uint8_t *sp = PHYS_BASE; 
 
-    /* Copy cmdline so we can tokenize it */
+
+    //need to make copy cmdline to tokenize it (otherwise weird behavior)
     char *cmd_copy = palloc_get_page(0);
     if (cmd_copy == NULL)
         return false;
     strlcpy(cmd_copy, cmdline, PGSIZE);
 
-    /* Tokenize arguments */
+    //tokenizing argument here
     char *argv[32];
     int argc = 0;
     char *token, *save_ptr;
@@ -439,36 +460,58 @@ static bool setup_stack(void **esp, const char *cmdline) {
         argv[argc++] = (char *) sp;
     }
 
-    /* Word-align the stack */
-    while (((uintptr_t)(sp - 4)) % 16 != 0) {
-        *(--sp) = 0;
-    }
+    // while ((uintptr_t)(sp) % 16 != 0) {
+    //     *(--sp) = 0;
+    // }
+    
 
-    /* Null sentinel */
+    // sp = (uint8_t *)((uintptr_t)sp & ~0xf); //NOT RIGHT???
+    // //sp -= 8; // pass 4
+    // sp -= 12; //pass 23
+    // //sp -= 4; // pass 1
+    // //sp -= 16; //pass 1
+
+    while ((uintptr_t)sp % 4 != 0)
+        *(--sp) = 0;
+
+    // signal end of argv[] with null
     sp -= sizeof(char *);
     *(char **)sp = NULL;
 
-    /* Push argv[i] in reverse order */
+
+    //push argv[i] (reverse order)
     for (int i = argc - 1; i >= 0; i--) {
         sp -= sizeof(char *);
         *(char **)sp = argv[i];
     }
+
+
+    // sp = (uint8_t *)((uintptr_t)sp & ~0xf);
+    // sp -= 12;
     
     char **argv_ptr = (char **) sp;
 
-    /* Push argv */
+    //push pointer to argv 
     sp -= sizeof(char **);
     *(char ***)sp = argv_ptr;
 
-    /* Push argc */
+    //pushing argc c ; also 4 bytes
     sp -= sizeof(int);
     *(int *)sp = argc;
 
-    /* Push fake return address */
+    //push fake return address - 4 bytes
     sp -= sizeof(void *);
     *(void **)sp = NULL;
 
+    //now aligning the FINAL stack pointerso that (sp + 4) is 16-byte aligned
+    if (((uintptr_t)sp + 4) % 16 != 0) {
+        int pad = ((uintptr_t)sp + 4) % 16;
+        sp -= pad;
+        memset(sp, 0, pad);
+    }
+
     *esp = sp;
+   // printf("esp+4 %16 = %d\n", ((uintptr_t)sp + 4) % 16);
 
     palloc_free_page(cmd_copy);
     return true;
